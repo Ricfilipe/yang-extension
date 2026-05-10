@@ -1,0 +1,67 @@
+module example-system {
+  yang-version 1.1;
+  namespace "urn:example:system";
+  prefix sys;
+
+  organization "Example Organization";
+  contact "support@example.com";
+
+  description
+    "Example YANG module for system configuration";
+
+  revision 2024-05-10 {
+    description
+      "Initial version";
+    reference
+      "RFC 7950: The YANG 1.1 Data Modeling Language";
+  }
+
+  container system {
+    description
+      "System configuration and state data";
+
+    leaf hostname {
+      type string;
+      description
+        "The hostname of the system";
+    }
+
+    leaf ntp-enabled {
+      type boolean;
+      default "true";
+      description
+        "Enable NTP service";
+    }
+
+    container interfaces {
+      description
+        "Network interfaces";
+
+      list interface {
+        key "name";
+        description
+          "Network interface list";
+
+        leaf name {
+          type string;
+          description
+            "Interface name";
+        }
+
+        leaf enabled {
+          type boolean;
+          default "true";
+          description
+            "Enable this interface";
+        }
+
+        leaf mtu {
+          type uint16;
+          default "1500";
+          description
+            "Maximum transmission unit";
+        }
+      }
+    }
+  }
+}

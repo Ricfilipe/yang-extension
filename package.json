@@ -1,0 +1,74 @@
+{
+  "name": "yang-validator",
+  "displayName": "YANG Validator",
+  "description": "Real-time YANG file structure validation",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.118.0"
+  },
+  "categories": [
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:yang"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "yang",
+        "aliases": [
+          "YANG"
+        ],
+        "extensions": [
+          ".yang"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "yang-validator.validateDirectory",
+        "title": "YANG: Validate Directory"
+      },
+      {
+        "command": "yang-validator.validateCurrentFile",
+        "title": "YANG: Validate Current File"
+      },
+      {
+        "command": "yang-validator.installPyang",
+        "title": "YANG: Install pyang"
+      }
+    ],
+    "configuration": {
+      "title": "YANG Validator",
+      "properties": {
+        "yangValidator.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable real-time YANG file validation"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test",
+    "setup-python": "python -m venv .venv && .venv\\Scripts\\activate && pip install -r requirements.txt",
+    "setup-python-unix": "python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.118.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "typescript-eslint": "^8.56.1",
+    "eslint": "^9.39.3",
+    "typescript": "^5.9.3",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}
