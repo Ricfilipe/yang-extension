@@ -26,6 +26,13 @@
         "configuration": "./language-configuration.json"
       }
     ],
+    "grammars": [
+      {
+        "language": "yang",
+        "scopeName": "source.yang",
+        "path": "./syntaxes/yang.tmLanguage.json"
+      }
+    ],
     "commands": [
       {
         "command": "yang-validator.validateDirectory",

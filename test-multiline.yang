@@ -1,0 +1,14 @@
+module test-system {
+  yang-version 1.1;
+  namespace "http://example.com/test";
+  prefix ts;
+
+  container system {
+    leaf hostname {
+      type string;
+      desciption
+        "The hostname of the system mas eu quero continuar
+        a descrição aqui para testar o limite de caracteres";
+    }
+  }
+}

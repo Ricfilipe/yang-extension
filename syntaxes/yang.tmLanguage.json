@@ -1,0 +1,92 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "YANG",
+  "scopeName": "source.yang",
+  "fileTypes": ["yang"],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#operators"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.yang",
+          "match": "//.*?$"
+        },
+        {
+          "name": "comment.block.yang",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.yang",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.yang",
+              "match": "\\\\."
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.yang",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.yang",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.other.yang",
+          "match": "\\b(module|submodule|namespace|prefix|yang-version|organization|contact|description|reference|revision|import|include|typedef|type|container|leaf|leaf-list|list|choice|case|grouping|uses|augment|rpc|input|output|notification|argument|yin-element|presence|config|status|mandatory|min-elements|max-elements|ordered-by|must|when|default|units|fraction-digits|length|pattern|range|require-instance|error-message|error-app-tag|modifier|position|value|base|fraction-digits)\\b"
+        },
+        {
+          "name": "keyword.control.yang",
+          "match": "\\b(true|false|system|user|current|deprecated|obsolete|add|delete|replace|not-supported)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.yang",
+          "match": "\\b(\\d+|0x[0-9a-fA-F]+)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.yang",
+          "match": "[{}\\[\\];:,+*/=-]"
+        }
+      ]
+    }
+  }
+}

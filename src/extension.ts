@@ -111,6 +111,14 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 	context.subscriptions.push(installPyangCommand);
 
+	// Register completion provider for YANG keywords
+	const completionProvider = vscode.languages.registerCompletionItemProvider(
+		'yang',
+		getYangCompletionProvider(),
+		''
+	);
+	context.subscriptions.push(completionProvider);
+
 	// Validate all YANG files in workspace on activation
 	if (pyangAvailable) {
 		validateAllYangFiles();
@@ -339,6 +347,8 @@ function findYangFiles(dirPath: string): string[] {
 function parsePyangOutput(output: string, uri: vscode.Uri): vscode.Diagnostic[] {
 	const diagnostics: vscode.Diagnostic[] = [];
 	const lines = output.split('\n');
+	const fileText = fs.existsSync(uri.fsPath) ? fs.readFileSync(uri.fsPath, 'utf-8') : '';
+	const sourceLines = fileText.split(/\r?\n/);
 
 	for (const line of lines) {
 		if (!line.trim()) {
@@ -351,8 +361,7 @@ function parsePyangOutput(output: string, uri: vscode.Uri): vscode.Diagnostic[] 
 		const match = cleanLine.match(/^(?:[a-zA-Z]:)?[^:]+:(\d+):(?:(\d+):)?\s*(\w+):\s*(.*)$/);
 		if (match) {
 			const lineNum = parseInt(match[1], 10) - 1;
-			// Column might be undefined, default to 0
-			const colNum = match[2] ? parseInt(match[2], 10) - 1 : 0;
+			const startCol = match[2] ? parseInt(match[2], 10) - 1 : 0;
 			const severity = match[3].toLowerCase();
 			const message = match[4];
 			let diagSeverity = vscode.DiagnosticSeverity.Error;
@@ -362,23 +371,264 @@ function parsePyangOutput(output: string, uri: vscode.Uri): vscode.Diagnostic[] 
 				diagSeverity = vscode.DiagnosticSeverity.Error;
 			}
 
+			// Find the actual start of statement by looking backwards
+			let startLineNum = lineNum;
+			let startActualCol = startCol;
+			
+			// Skip leading whitespace on error line
+			const errorLineText = sourceLines[lineNum] || '';
+			while (startActualCol < errorLineText.length && /[ \t]/.test(errorLineText[startActualCol])) {
+				startActualCol += 1;
+			}
+
+			// Look backwards to find where this statement begins
+			let foundStart = false;
+			for (let ln = lineNum - 1; ln >= 0 && !foundStart; ln--) {
+				const text = sourceLines[ln];
+				let inSingleQuote = false;
+				let inDoubleQuote = false;
+				let escaped = false;
+
+				for (let i = text.length - 1; i >= 0; i--) {
+					const ch = text[i];
+					if (escaped) {
+						escaped = false;
+						continue;
+					}
+
+					if (ch === '\\') {
+						escaped = true;
+						continue;
+					}
+
+					if (!inSingleQuote && ch === '"') {
+						inDoubleQuote = !inDoubleQuote;
+						continue;
+					}
+
+					if (!inDoubleQuote && ch === "'") {
+						inSingleQuote = !inSingleQuote;
+						continue;
+					}
+
+					// Found previous statement terminator
+					if (!inSingleQuote && !inDoubleQuote && (ch === ';' || ch === '}')) {
+						startLineNum = ln + 1;
+						foundStart = true;
+						break;
+					}
+				}
+			}
+
+			// If we found a previous terminator, use the line after it.
+			// Skip blank lines and leading whitespace before the actual statement.
+			let searchStartLine = startLineNum;
+			let searchStartCol = 0;
+
+			// Advance to first non-empty line when the start line is blank.
+			while (
+				searchStartLine < sourceLines.length &&
+				sourceLines[searchStartLine].trim().length === 0 &&
+				searchStartLine < lineNum
+			) {
+				searchStartLine += 1;
+			}
+
+			const startLineText = sourceLines[searchStartLine] || '';
+			if (searchStartLine === lineNum) {
+				searchStartCol = startActualCol;
+			} else {
+				for (let i = 0; i < startLineText.length; i++) {
+					if (!/[ \t]/.test(startLineText[i])) {
+						searchStartCol = i;
+						break;
+					}
+				}
+			}
+			// Now search forward from start to find the ending delimiter
+			let endLineNum = lineNum;
+			let endCol = startActualCol + 1;
+			let inSingleQuote = false;
+			let inDoubleQuote = false;
+			let escaped = false;
+			let found = false;
+
+			// Search from start position onwards, including next lines
+			for (let ln = searchStartLine; ln < sourceLines.length && !found; ln++) {
+				const text = sourceLines[ln];
+				const startIdx = ln === searchStartLine ? searchStartCol : 0;
+
+				for (let i = startIdx; i < text.length; i++) {
+					const ch = text[i];
+					if (escaped) {
+						escaped = false;
+						continue;
+					}
+
+					if (ch === '\\') {
+						escaped = true;
+						continue;
+					}
+
+					if (!inSingleQuote && ch === '"') {
+						inDoubleQuote = !inDoubleQuote;
+						continue;
+					}
+
+					if (!inDoubleQuote && ch === "'") {
+						inSingleQuote = !inSingleQuote;
+						continue;
+					}
+
+					if (!inSingleQuote && !inDoubleQuote && (ch === ';' || ch === '{')) {
+						// End is on the same line as the delimiter, but before it
+						endLineNum = ln;
+						let endPos = i;
+						// Trim trailing whitespace before the delimiter
+						while (endPos > searchStartCol && /[ \t]/.test(text[endPos - 1])) {
+							endPos -= 1;
+						}
+						endCol = Math.max(endPos, searchStartCol + 1);
+						found = true;
+						break;
+					}
+				}
+			}
+
 			const range = new vscode.Range(
-				lineNum,
-				Math.max(0, colNum),
-				lineNum,
-				Math.max(colNum + 1, 1)
+				searchStartLine,
+				Math.max(0, searchStartCol),
+				endLineNum,
+				Math.max(endCol, searchStartCol + 1)
 			);
 
 			const diagnostic = new vscode.Diagnostic(range, message, diagSeverity);
 			diagnostic.code = severity;
 			diagnostic.source = 'pyang';
 			diagnostics.push(diagnostic);
-
-			console.log(`Parsed diagnostic: ${message} at ${lineNum + 1}:${colNum + 1} (${severity})`);
 		}
 	}
 
 	return diagnostics;
+}
+
+function getYangCompletionProvider(): vscode.CompletionItemProvider {
+	const yangKeywords = [
+		// Module structure
+		{ label: 'module', kind: vscode.CompletionItemKind.Keyword, detail: 'Defines a YANG module' },
+		{ label: 'submodule', kind: vscode.CompletionItemKind.Keyword, detail: 'Defines a submodule belonging to a module' },
+		{ label: 'namespace', kind: vscode.CompletionItemKind.Keyword, detail: 'URI for the module' },
+		{ label: 'prefix', kind: vscode.CompletionItemKind.Keyword, detail: 'Prefix for the module namespace' },
+		{ label: 'yang-version', kind: vscode.CompletionItemKind.Keyword, detail: 'YANG version (1.0 or 1.1)' },
+		{ label: 'organization', kind: vscode.CompletionItemKind.Keyword, detail: 'Organization name' },
+		{ label: 'contact', kind: vscode.CompletionItemKind.Keyword, detail: 'Contact information' },
+		{ label: 'description', kind: vscode.CompletionItemKind.Keyword, detail: 'Textual description' },
+		{ label: 'reference', kind: vscode.CompletionItemKind.Keyword, detail: 'Reference information' },
+		
+		// Imports and includes
+		{ label: 'import', kind: vscode.CompletionItemKind.Keyword, detail: 'Import another module' },
+		{ label: 'include', kind: vscode.CompletionItemKind.Keyword, detail: 'Include a submodule' },
+		{ label: 'revision', kind: vscode.CompletionItemKind.Keyword, detail: 'Revision statement' },
+		{ label: 'revision-date', kind: vscode.CompletionItemKind.Keyword, detail: 'Date of revision' },
+		
+		// Type definitions
+		{ label: 'typedef', kind: vscode.CompletionItemKind.Keyword, detail: 'Defines a user-defined type' },
+		{ label: 'type', kind: vscode.CompletionItemKind.Keyword, detail: 'Built-in or derived type' },
+		{ label: 'container', kind: vscode.CompletionItemKind.Keyword, detail: 'Container node' },
+		{ label: 'leaf', kind: vscode.CompletionItemKind.Keyword, detail: 'Leaf node (single value)' },
+		{ label: 'leaf-list', kind: vscode.CompletionItemKind.Keyword, detail: 'Leaf-list node (multiple values)' },
+		{ label: 'list', kind: vscode.CompletionItemKind.Keyword, detail: 'List node' },
+		{ label: 'choice', kind: vscode.CompletionItemKind.Keyword, detail: 'Choice between alternatives' },
+		{ label: 'case', kind: vscode.CompletionItemKind.Keyword, detail: 'Case in a choice' },
+		
+		// Grouping and augment
+		{ label: 'grouping', kind: vscode.CompletionItemKind.Keyword, detail: 'Defines a reusable group of nodes' },
+		{ label: 'uses', kind: vscode.CompletionItemKind.Keyword, detail: 'References a grouping' },
+		{ label: 'augment', kind: vscode.CompletionItemKind.Keyword, detail: 'Augments nodes in another module' },
+		{ label: 'refine', kind: vscode.CompletionItemKind.Keyword, detail: 'Refines nodes from a grouping' },
+		
+		// RPC and notifications
+		{ label: 'rpc', kind: vscode.CompletionItemKind.Keyword, detail: 'RPC definition' },
+		{ label: 'input', kind: vscode.CompletionItemKind.Keyword, detail: 'Input parameters for RPC' },
+		{ label: 'output', kind: vscode.CompletionItemKind.Keyword, detail: 'Output of RPC' },
+		{ label: 'notification', kind: vscode.CompletionItemKind.Keyword, detail: 'Notification message' },
+		
+		// Constraints and validation
+		{ label: 'must', kind: vscode.CompletionItemKind.Keyword, detail: 'Mandatory constraint' },
+		{ label: 'when', kind: vscode.CompletionItemKind.Keyword, detail: 'Conditional constraint' },
+		{ label: 'config', kind: vscode.CompletionItemKind.Keyword, detail: 'true or false (configuration data)' },
+		{ label: 'status', kind: vscode.CompletionItemKind.Keyword, detail: 'current, deprecated, or obsolete' },
+		{ label: 'mandatory', kind: vscode.CompletionItemKind.Keyword, detail: 'true or false' },
+		{ label: 'min-elements', kind: vscode.CompletionItemKind.Keyword, detail: 'Minimum number of elements' },
+		{ label: 'max-elements', kind: vscode.CompletionItemKind.Keyword, detail: 'Maximum number of elements' },
+		{ label: 'ordered-by', kind: vscode.CompletionItemKind.Keyword, detail: 'user or system' },
+		{ label: 'presence', kind: vscode.CompletionItemKind.Keyword, detail: 'Presence container' },
+		
+		// Type constraints
+		{ label: 'length', kind: vscode.CompletionItemKind.Keyword, detail: 'String length constraint' },
+		{ label: 'pattern', kind: vscode.CompletionItemKind.Keyword, detail: 'Regular expression pattern' },
+		{ label: 'range', kind: vscode.CompletionItemKind.Keyword, detail: 'Numeric range constraint' },
+		{ label: 'fraction-digits', kind: vscode.CompletionItemKind.Keyword, detail: 'Decimal fraction digits' },
+		{ label: 'base', kind: vscode.CompletionItemKind.Keyword, detail: 'Base type for enumeration' },
+		{ label: 'enum', kind: vscode.CompletionItemKind.Keyword, detail: 'Enumeration value' },
+		{ label: 'bit', kind: vscode.CompletionItemKind.Keyword, detail: 'Bit in a bits type' },
+		
+		// Other
+		{ label: 'default', kind: vscode.CompletionItemKind.Keyword, detail: 'Default value' },
+		{ label: 'units', kind: vscode.CompletionItemKind.Keyword, detail: 'Unit of measurement' },
+		{ label: 'require-instance', kind: vscode.CompletionItemKind.Keyword, detail: 'true or false' },
+		{ label: 'key', kind: vscode.CompletionItemKind.Keyword, detail: 'Key nodes for a list' },
+		{ label: 'unique', kind: vscode.CompletionItemKind.Keyword, detail: 'Unique constraint' },
+		{ label: 'error-message', kind: vscode.CompletionItemKind.Keyword, detail: 'Error message' },
+		{ label: 'error-app-tag', kind: vscode.CompletionItemKind.Keyword, detail: 'Application-specific error tag' },
+		{ label: 'position', kind: vscode.CompletionItemKind.Keyword, detail: 'Position in bits' },
+		{ label: 'value', kind: vscode.CompletionItemKind.Keyword, detail: 'Enum or bit value' },
+		{ label: 'modifier', kind: vscode.CompletionItemKind.Keyword, detail: 'Pattern modifier (invert-match)' },
+		{ label: 'argument', kind: vscode.CompletionItemKind.Keyword, detail: 'Extension argument' },
+		{ label: 'yin-element', kind: vscode.CompletionItemKind.Keyword, detail: 'YIN/YANG format for extension' },
+		
+		// Built-in types
+		{ label: 'string', kind: vscode.CompletionItemKind.TypeParameter, detail: 'Text string' },
+		{ label: 'int8', kind: vscode.CompletionItemKind.TypeParameter, detail: '8-bit signed integer' },
+		{ label: 'int16', kind: vscode.CompletionItemKind.TypeParameter, detail: '16-bit signed integer' },
+		{ label: 'int32', kind: vscode.CompletionItemKind.TypeParameter, detail: '32-bit signed integer' },
+		{ label: 'int64', kind: vscode.CompletionItemKind.TypeParameter, detail: '64-bit signed integer' },
+		{ label: 'uint8', kind: vscode.CompletionItemKind.TypeParameter, detail: '8-bit unsigned integer' },
+		{ label: 'uint16', kind: vscode.CompletionItemKind.TypeParameter, detail: '16-bit unsigned integer' },
+		{ label: 'uint32', kind: vscode.CompletionItemKind.TypeParameter, detail: '32-bit unsigned integer' },
+		{ label: 'uint64', kind: vscode.CompletionItemKind.TypeParameter, detail: '64-bit unsigned integer' },
+		{ label: 'boolean', kind: vscode.CompletionItemKind.TypeParameter, detail: 'true or false' },
+		{ label: 'empty', kind: vscode.CompletionItemKind.TypeParameter, detail: 'No value' },
+		{ label: 'enumeration', kind: vscode.CompletionItemKind.TypeParameter, detail: 'Enumerated type' },
+		{ label: 'bits', kind: vscode.CompletionItemKind.TypeParameter, detail: 'Bit flags' },
+		{ label: 'binary', kind: vscode.CompletionItemKind.TypeParameter, detail: 'Binary data' },
+		{ label: 'decimal64', kind: vscode.CompletionItemKind.TypeParameter, detail: 'Decimal number' },
+		{ label: 'identityref', kind: vscode.CompletionItemKind.TypeParameter, detail: 'Reference to identity' },
+		{ label: 'instance-identifier', kind: vscode.CompletionItemKind.TypeParameter, detail: 'Instance identifier' },
+		{ label: 'union', kind: vscode.CompletionItemKind.TypeParameter, detail: 'Union of types' },
+		
+		// Boolean values
+		{ label: 'true', kind: vscode.CompletionItemKind.Constant, detail: 'Boolean true' },
+		{ label: 'false', kind: vscode.CompletionItemKind.Constant, detail: 'Boolean false' },
+	];
+
+	return {
+		provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
+			const linePrefix = document.lineAt(position.line).text.substr(0, position.character);
+			
+			// Don't suggest in comments or strings
+			if (linePrefix.includes('//') || linePrefix.includes('/*') || linePrefix.includes('"') || linePrefix.includes("'")) {
+				return [];
+			}
+
+			return yangKeywords.map(keyword => {
+				const item = new vscode.CompletionItem(keyword.label, keyword.kind);
+				item.detail = keyword.detail;
+				item.insertText = keyword.label;
+				return item;
+			});
+		}
+	};
 }
 
 export function deactivate() {
